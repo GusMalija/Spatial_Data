@@ -1,0 +1,121 @@
+---
+title: "Assignment 4. Spatial Data"
+author: "Introduction to Data Science"
+date: "10/01/2020"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "")
+library(tidyverse)
+library(sf)
+library(rmapshaper)
+library(arvig)
+library(RCurl)
+library(dplyr)
+```
+
+
+##  A map of German counties
+
+1. Download spatial data on German administrative units from http://sg.geodatenzentrum.de/web_download/vg/vg1000-ew_3112/utm32s/shape/vg1000-ew_3112.utm32s.shape.ebenen.zip. Use R functions to (a) execute the download and (b) unzip the file.
+```{r}
+#downloading the file
+download.file("http://sg.geodatenzentrum.de/web_download/vg/vg1000-ew_3112/utm32s/shape/vg1000-ew_3112.utm32s.shape.ebenen.zip", destfile = "data.zip", method = "libcurl")
+
+#unzipping the file
+unzip("data.zip")
+#listing files in the unzipped folder by names
+list.files()
+```
+
+2. Import the county shapefile (VG1000_KRS.shp) into R.
+```{r}
+#importing the county shapefile
+county_shape <-read_sf("vg1000-ew_3112.utm32s.shape.ebenen/vg1000-ew_ebenen/VG1000_KRS.shp")
+```
+
+3. The map resolution is pretty high, which slows down plotting and computations. Reduce map complexity with the functionality of the rmapshaper package and keep 10% of the points. Work with the simplified shapefile from hereon.
+
+```{r}
+
+```
+
+## Data on anti-refugee violence in Germany
+
+1. Get the arvig package from https://github.com/davben/arvig.
+```{r gh-installation, eval = FALSE}
+#install.packages("devtools")
+devtools::install_github("davben/arvig")
+```
+
+2. Filter out events that belong into the "other" category or are associated with more than one category. Furthermore, restrict the data to events that took place between 2014 and 2015.
+```{r}
+library(arvig)
+data("arvig")
+
+arvig_date <- as.Date(arvig$date)
+filtered_events <- arvig %>% 
+             filter(date >= ("2014-01-01") & 
+                    date <= ("2015-12-31"),
+                    grepl("[\\&]|other",
+                    category_en))
+```
+
+3. Provide a frequency table (or appropriate plot) of the total number of events (a) by category and (b) by state.
+```{r}
+#categorizing the data
+categorized_events <- arvig %>%
+  group_by(category_en,state) %>% 
+  summarise(count=n()) %>% 
+  #renaming count to frequency and leaving everything else as is
+  select(everything(),
+         frequency=count)
+
+#plotting a frequency table by Category
+barplot(categorized_events$frequency, names.arg = categorized_events$category_en, main = "Frequency Table by Category")
+
+```
+```{r}
+#plotting a frequency table by State
+barplot(categorized_events$frequency, names.arg = categorized_events$state, main = "Frequency Table by State")
+```
+```{r}
+#Altenatively, generating a table
+table(arvig$state, arvig$category_en)
+```
+
+4. Turn the arvig dataset into an sf object using the st_as_sf function and the string "+proj=longlat +ellps=GRS80 +datum=WGS84 +no_defs" to define the CRS. 
+```{r}
+sf_object <- st_as_sf(arvig, coords=c("longitude","latitude"), crs="+proj=longlat +ellps=GRS80 +datum=WGS84 +no_defs", agr = "constant")
+```
+
+5. Plot the county map and add the events as dots (colored by type). You might have to transform the CRS of the events data to make it compatible with the county spatial data.
+```{r}
+#transforming the dataset before plotting
+county_transformed <- st_transform(county_shape, 26978)
+#transforming the CRS of the events data
+sf_object_transformed <- st_transform(sf_object, 26978)
+  
+ggplot(county_transformed)  + geom_sf() +
+      geom_sf(data = sf_object_transformed, 
+      mapping = aes(col = category_en))
+```
+
+6. Finally, use both spatial objects to generate a count variable of the events by county. Normalize it by population using the EWZ variable in the county data. Provide a table of the 10 counties with the highest number of events per 100k inhabitants.
+
+```{r}
+#joining datasets
+joined_spatial <- st_join(sf_object_transformed, county_transformed) %>%
+  #grouping by county/GEN, events/category and population/EWZ
+  group_by(EWZ, category_en, GEN) %>% 
+  summarise(count_events=n()) %>%
+  #normalizing under the definition that cases/frequencies are normalized by population
+  mutate(normalized=(count_events/EWZ)*100000) %>% 
+  #arranging counts in a descending order
+  arrange(desc(count_events))
+
+ten_highest <- joined_spatial[1:10,]
+ten_highest
+```
